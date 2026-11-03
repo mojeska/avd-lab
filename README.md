@@ -4,6 +4,8 @@
 
 Azure Virtual Desktop lab in Bicep: a pooled host pool with **Entra-joined** session hosts (no domain controller), optional Intune enrollment, Log Analytics diagnostics, single sign-on, and cost guardrails (a scaling plan, auto-shutdown, Start VM on Connect, Standard HDD disks and a 0.1 GB/day log cap).
 
+New to some of the terms? See the [Glossary](#glossary).
+
 ## Disclaimer
 
 > [!WARNING]
@@ -243,6 +245,98 @@ Offline checks (Bicep build and lint, script parse, help and PSScriptAnalyzer). 
 ```powershell
 Invoke-Pester -Path ./tests -Output Detailed
 ```
+
+## Glossary
+
+**Application group (desktop application group):** decides what users see in their feed. This lab publishes one full desktop, named *Desktop*. Users get it through the **Desktop Virtualization User** role on the app group.
+
+**ARM template:** Azure Resource Manager's own JSON format for describing resources. Bicep compiles to it, and the portal's **Deploy a custom template** reads it.
+
+**Auto-shutdown:** a daily schedule on the VM (here 19:00) that deallocates it. It's a backup for the scaling plan, and runs once a day whatever is happening.
+
+**Azure CLI (`az`):** Microsoft's command-line tool for Azure. Every `az ...` command in this README uses it.
+
+**Azure Virtual Desktop (AVD):** Microsoft's service for running Windows desktops in Azure and connecting to them from anywhere. Its control plane (host pools, app groups, workspaces, brokering connections) is free; you pay for the VMs, disks and logs.
+
+**Bicep:** a language for describing Azure resources as code. The `.bicep` files in `infra/` say what to build, and Azure works out how to get there. Running a deployment again updates the existing resources rather than creating copies.
+
+**Conditional Access:** Entra ID policies that decide when sign-ins need extra checks, such as MFA. It needs Entra ID P1 or higher; Security Defaults is the free alternative.
+
+**Deallocate:** stopping a VM so Azure releases its hardware, and compute billing stops. The disk is still billed. Shutting down from inside Windows stops the VM *without* deallocating it, so compute keeps billing.
+
+**Default outbound access:** a free, implicit internet connection Azure used to give every VM. New subnets are now *private* (no default outbound access) unless the template says otherwise, so this lab turns it on explicitly. Microsoft is retiring it; the long-term replacement is a NAT gateway.
+
+**Entra joined:** the VM is joined to Microsoft Entra ID instead of an on-premises Active Directory domain, so there's no domain controller to run. Users sign in with their Entra accounts.
+
+**FSLogix:** keeps each user's profile in a file share so it follows them between hosts. Not used yet (see Roadmap); with one host, profiles stay on the VM's disk.
+
+**Host pool:** a group of identical session hosts that AVD treats as one. *Pooled* means many users share each host; *personal* gives each user their own VM. This lab is pooled, with one host and up to 4 sessions.
+
+**Intune:** Microsoft's device management service. Enrolling a host lets you push policies and apps to it. Optional here (`enrollInIntune`) and needs an Intune license.
+
+**Log Analytics workspace:** where Azure stores logs so you can search them. You pay per GB taken in (*ingestion*) after the first 5 GB a month, and for keeping logs past 31 days (*retention*). The daily cap stops ingestion for the rest of the day once reached.
+
+**Managed disk:** the VM's virtual hard disk. *Standard HDD* is cheapest, *Standard SSD* is faster, *Premium SSD* is for production. You pay for the disk's size tier, running or not.
+
+**MFA (multifactor authentication):** a second check at sign-in, such as the Authenticator app. The password-only Windows sign-in can't do it, which is why this lab uses single sign-on.
+
+**Microsoft Entra ID:** Microsoft's cloud identity service (formerly Azure Active Directory). It holds your users, groups, devices and app registrations, and handles sign-in.
+
+**Microsoft Graph:** the single web API for Microsoft 365 and Entra ID data: users, groups, devices, apps and settings. Some settings, such as turning on Entra sign-in for RDP, have no portal page and can only be changed through Graph. You reach it from Graph PowerShell (`Connect-MgGraph`, `Update-Mg...`) or with `az rest` calls to `https://graph.microsoft.com`.
+
+**Microsoft Graph PowerShell:** the PowerShell modules (`Microsoft.Graph.*`) that wrap Microsoft Graph in cmdlets.
+
+**Multi-session:** an edition of Windows 11 Enterprise that only runs in Azure and lets several users sign in to the same VM at once. It's what makes a pooled host pool possible.
+
+**NAT gateway:** an Azure resource that gives a subnet a fixed, managed route to the internet. The production replacement for default outbound access, at about $33 a month.
+
+**NSG (network security group):** a firewall rule list for a subnet or network card. This lab's NSG has no inbound rules, so nothing on the internet can start a connection to the hosts.
+
+**Object ID:** the unique ID of something in Entra ID (a user, group, device or service principal). The parameter file uses object IDs to say which group gets access.
+
+**Parameter file (`.bicepparam`):** your values for a Bicep template, such as group IDs and VM size. `main.bicepparam` is the example; your own copy, `lab.local.bicepparam`, is ignored by Git so IDs never get committed.
+
+**Quota:** how many vCPUs your subscription may run per VM family and region. New subscriptions often start at 0 for some families; you request more in the portal under **Quotas**.
+
+**RDP (Remote Desktop Protocol) and RDP properties:** the protocol AVD uses to show you the desktop. RDP properties are settings on the host pool that control the connection, such as clipboard and audio redirection, or `enablerdsaadauth:i:1` for single sign-on.
+
+**Registration token:** a short-lived key (4 hours here) that lets a new VM join the host pool. The deployment creates it and the run command uses it.
+
+**Resource group:** a folder for Azure resources. Everything in this lab goes into `rg-avd-lab`, so deleting that group removes the whole lab.
+
+**Reverse connect:** AVD hosts make outbound connections to the AVD service rather than accepting inbound ones, so they need no public IP and no open ports.
+
+**Role assignment (Azure RBAC):** gives a user, group or service principal a role on a scope, such as *Virtual Machine User Login* on the resource group. RBAC stands for role-based access control.
+
+**Run command:** a way to run a script inside a VM from Azure. This lab uses one to install the AVD agent and register the host.
+
+**Scaling plan:** an AVD feature that starts and stops session hosts on a schedule and based on use. Here it deallocates the host whenever no sessions are left. Free.
+
+**Security Defaults:** a free, all-or-nothing set of Entra ID protections, including MFA registration and MFA when sign-ins look risky. The alternative to Conditional Access.
+
+**Service principal:** an app's identity in your tenant. The Azure Virtual Desktop service principal is what starts and stops your VMs, so it gets the Power On (Off) Contributor role.
+
+**Session host:** a VM that users connect to. Here, `avdlab-sh-0`.
+
+**Single sign-on (SSO):** you sign in once in the Windows App with your Entra account (MFA included), and Windows on the host trusts that sign-in instead of asking for a password again.
+
+**Start VM on Connect:** AVD starts a deallocated host when a user connects. The first connection takes a few minutes.
+
+**Subscription:** the Azure billing account resources live in. It belongs to one Entra tenant.
+
+**Tenant:** your organization's instance of Microsoft Entra ID, such as `ms-bob.com`. Users, groups and devices live in the tenant; Azure resources live in subscriptions linked to it.
+
+**Trusted Launch:** VM security features (Secure Boot and a virtual TPM) that protect against boot-level malware. Free, and recommended for Windows 11.
+
+**VM size and family:** the size sets vCPUs, memory and price (for example `Standard_D2s_v4`: 2 vCPUs, 8 GiB). Sizes come in families (Dsv4, Dsv5, Basv2 and so on), and quota is set per family. *B-series* sizes are burstable: cheaper, but they slow down under long periods of heavy CPU use.
+
+**VNet and subnet:** the lab's private network in Azure (`10.50.0.0/16`) and the slice of it the hosts use (`10.50.1.0/24`).
+
+**What-if:** a preview of what a deployment would create, change or delete, without doing it.
+
+**Windows App:** Microsoft's client for connecting to AVD and other cloud PCs, on Windows, macOS, iOS, Android and the web. It replaces the older Remote Desktop client.
+
+**Workspace:** what users subscribe to in the Windows App. It lists the application groups they can use; here it shows as **AVD lab**.
 
 ## References
 
