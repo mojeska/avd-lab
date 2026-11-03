@@ -324,7 +324,7 @@ Invoke-Pester -Path ./tests -Output Detailed
 
 **Subscription:** the Azure billing account resources live in. It belongs to one Entra tenant.
 
-**Tenant:** your organization's instance of Microsoft Entra ID, such as `ms-bob.com`. Users, groups and devices live in the tenant; Azure resources live in subscriptions linked to it.
+**Tenant:** your organization's instance of Microsoft Entra ID, such as `contoso.com`. Users, groups and devices live in the tenant; Azure resources live in subscriptions linked to it.
 
 **Trusted Launch:** VM security features (Secure Boot and a virtual TPM) that protect against boot-level malware. Free, and recommended for Windows 11.
 
