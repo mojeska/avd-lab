@@ -4,6 +4,7 @@
 param location string
 param vmName string
 param vmSize string
+param osDiskType string
 param imageReference object
 param subnetId string
 param localAdminName string
@@ -57,7 +58,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2025-04-01' = {
         createOption: 'FromImage'
         deleteOption: 'Delete'
         managedDisk: {
-          storageAccountType: 'StandardSSD_LRS' // lab: Premium is recommended for production
+          storageAccountType: osDiskType
         }
       }
     }

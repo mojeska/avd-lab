@@ -24,8 +24,16 @@ param adminGroupObjectId string = ''
 @maxValue(5)
 param sessionHostCount int = 1
 
-@description('VM size for the session hosts.')
-param vmSize string = 'Standard_D2s_v5'
+@description('VM size for the session hosts. New pay-as-you-go subscriptions often have 0 quota for the Dsv5 family; check with: az vm list-usage -l <region> -o table')
+param vmSize string = 'Standard_D2s_v4'
+
+@description('OS disk type. Standard_LRS (HDD) is cheapest; StandardSSD_LRS boots and signs in faster for about $3.70/month more per host.')
+@allowed([
+  'Standard_LRS'
+  'StandardSSD_LRS'
+  'Premium_LRS'
+])
+param osDiskType string = 'Standard_LRS'
 
 @description('Marketplace image. List current SKUs: az vm image list-skus -l <region> -p MicrosoftWindowsDesktop -f office-365 -o table')
 param imageReference object = {
@@ -53,6 +61,15 @@ param shutdownTimeZone string = 'Pacific Standard Time'
 
 @description('Object ID of the Azure Virtual Desktop service principal in your tenant, for Start VM on Connect. Empty disables it.')
 param avdServicePrincipalObjectId string = ''
+
+@description('Single sign-on with Microsoft Entra authentication. Needed when MFA is required (including Security Defaults). Also needs the one-time tenant setting in the README.')
+param enableSingleSignOn bool = true
+
+@description('Scaling plan that deallocates the host when it has no sessions. Needs avdServicePrincipalObjectId.')
+param enableScalingPlan bool = true
+
+@description('Log Analytics daily ingestion cap in GB, as a string (Bicep has no decimals).')
+param logDailyCapGb string = '0.1'
 
 @description('Address space for the lab VNet.')
 param vnetAddressPrefix string = '10.50.0.0/16'
@@ -83,6 +100,7 @@ module monitoring 'modules/monitoring.bicep' = {
   params: {
     location: location
     prefix: prefix
+    dailyCapGb: logDailyCapGb
     tags: tags
   }
 }
@@ -95,6 +113,7 @@ module avd 'modules/hostpool.bicep' = {
     userGroupObjectId: userGroupObjectId
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     startVMOnConnect: !empty(avdServicePrincipalObjectId)
+    enableSingleSignOn: enableSingleSignOn
     tokenExpiry: dateTimeAdd(baseTime, 'PT4H')
     tags: tags
   }
@@ -106,6 +125,7 @@ module sessionHosts 'modules/sessionhost.bicep' = [for i in range(0, sessionHost
     location: location
     vmName: '${prefix}-sh-${i}'
     vmSize: vmSize
+    osDiskType: osDiskType
     imageReference: imageReference
     subnetId: network.outputs.subnetId
     localAdminName: localAdminName
@@ -122,8 +142,12 @@ module sessionHosts 'modules/sessionhost.bicep' = [for i in range(0, sessionHost
 // admins need "Virtual Machine Administrator Login". Scoped to this resource group.
 var vmUserLoginRole = 'fb879df8-f326-4884-b1cf-06f3ad86be52'
 var vmAdminLoginRole = '1c0163c0-47e6-4577-8991-ea5c82e286e4'
-// Lets the AVD service start deallocated hosts when a user connects.
+// Lets the AVD service start deallocated hosts when a user connects (Power On Contributor),
+// or also stop them for the scaling plan (Power On Off Contributor).
 var powerOnContributorRole = '489581de-a3bd-480d-9518-53dea7416b33'
+var powerOnOffContributorRole = '40c5ff49-9181-41f8-ae61-143b0e78555e'
+var useScalingPlan = enableScalingPlan && !empty(avdServicePrincipalObjectId)
+var avdServiceRole = useScalingPlan ? powerOnOffContributorRole : powerOnContributorRole
 
 resource userLogin 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(resourceGroup().id, userGroupObjectId, vmUserLoginRole)
@@ -144,11 +168,25 @@ resource adminLogin 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!
 }
 
 resource powerOn 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(avdServicePrincipalObjectId)) {
-  name: guid(resourceGroup().id, avdServicePrincipalObjectId, powerOnContributorRole)
+  name: guid(resourceGroup().id, avdServicePrincipalObjectId, avdServiceRole)
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', powerOnContributorRole)
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', avdServiceRole)
     principalId: avdServicePrincipalObjectId
     principalType: 'ServicePrincipal'
+  }
+}
+
+module scaling 'modules/scalingplan.bicep' = if (useScalingPlan) {
+  name: 'scalingplan'
+  dependsOn: [
+    powerOn
+  ]
+  params: {
+    location: avdMetadataLocation
+    prefix: prefix
+    hostPoolId: avd.outputs.hostPoolId
+    timeZone: shutdownTimeZone
+    tags: tags
   }
 }
 
