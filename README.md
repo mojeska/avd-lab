@@ -30,7 +30,7 @@ Azure Virtual Desktop lab in Bicep: a pooled host pool with **Entra-joined** ses
 - Azure CLI with Bicep (`az bicep install`).
 - An Entra group for the desktop users. Each user needs a license with AVD rights (Microsoft 365 E3/E5/A3/A5/F3/Business Premium, or Windows Enterprise E3/E5).
 - For Intune enrollment: an Intune license, and **MDM user scope** set in Intune automatic enrollment. Otherwise set `enrollInIntune = false`.
-- VM quota for the size you pick. New pay-as-you-go subscriptions often have **0** cores for the Dsv5 family, which is why the default is `Standard_D2s_v4` (same price). Check with `az vm list-usage -l westus3 -o table`.
+- VM quota for the size you pick. New pay-as-you-go subscriptions often have **0** cores for the Dsv5 family, which is why the default is `Standard_D2s_v4` (same price). Check with `az vm list-usage -l westus3 -o table`, or in the portal: search **Quotas** > **Compute**, filter to your region and look for the family (for example *Standard DSv4 Family vCPUs*). Request more from the same page.
 - For single sign-on, a one-time tenant setting (below).
 
 ### One-time tenant setting for single sign-on
@@ -49,7 +49,11 @@ foreach ($appId in 'a4a365df-50f1-4397-bc59-1a1564b8bb9c', '270efc09-cd0d-444b-a
 
 Both should show `True`.
 
+**Portal:** there's no portal setting for this; it's only available through Microsoft Graph.
+
 ## Deploy
+
+Each Azure CLI step below has a **Portal:** line with the same step in the [Azure portal](https://portal.azure.com) or the [Microsoft Entra admin center](https://entra.microsoft.com). The deployment itself needs the CLI or an extra build step, as explained there.
 
 Sign in and pick the subscription:
 
@@ -58,11 +62,15 @@ az login
 az account set --subscription "<subscription name or id>"
 ```
 
+**Portal:** sign in at <https://portal.azure.com>. If you have more than one tenant, open **Settings** (gear icon) > **Directories + subscriptions** and switch to the lab tenant. Your subscriptions are under **Subscriptions**.
+
 Get the user group's object ID (and the admin group's, if you use one):
 
 ```sh
 az ad group show -g "AVD Users" --query id -o tsv
 ```
+
+**Portal:** Entra admin center > **Groups** > **All groups** > *AVD Users* > **Overview** > **Object ID**.
 
 Optional, for Start VM on Connect and the scaling plan: get the AVD service principal's object ID in your tenant:
 
@@ -70,11 +78,15 @@ Optional, for Start VM on Connect and the scaling plan: get the AVD service prin
 az ad sp show --id 9cdead84-a844-4324-93f2-b2e6bb768d07 --query id -o tsv
 ```
 
+**Portal:** Entra admin center > **Enterprise apps** > **All applications**. Remove the *Application type* filter and search for `9cdead84-a844-4324-93f2-b2e6bb768d07` (named *Azure Virtual Desktop*, or *Windows Virtual Desktop* in older tenants). Copy its **Object ID**.
+
 Copy the example parameters and fill in the IDs (`*.local.bicepparam` is gitignored):
 
 ```sh
 cp infra/main.bicepparam infra/lab.local.bicepparam
 ```
+
+**Portal:** no equivalent; the parameter file lives on your computer. If you deploy from the portal (below), you type the same values into its form instead.
 
 The cost choices in the parameter file:
 
@@ -92,11 +104,15 @@ Check the current image SKUs in your region (update `imageReference` in `main.bi
 az vm image list-skus -l westus3 -p MicrosoftWindowsDesktop -f office-365 -o table
 ```
 
+**Portal:** **Virtual machines** > **Create** > **Azure virtual machine** > **Image** > **See all images**, search for *Microsoft 365 Apps* and open *Windows 11 Enterprise multi-session + Microsoft 365 Apps*. Its plan list shows the versions on offer (24H2 is `win11-24h2-avd-m365`). Cancel without creating anything.
+
 Create the resource group:
 
 ```sh
 az group create -n rg-avd-lab -l westus3
 ```
+
+**Portal:** **Resource groups** > **Create**. Pick the subscription, name it `rg-avd-lab`, region *West US 3*, then **Review + create** > **Create**.
 
 Set the local admin password for this shell only (PowerShell: `$env:AVD_LOCAL_ADMIN_PASSWORD = '...'`):
 
@@ -104,11 +120,15 @@ Set the local admin password for this shell only (PowerShell: `$env:AVD_LOCAL_AD
 read -rs AVD_LOCAL_ADMIN_PASSWORD && export AVD_LOCAL_ADMIN_PASSWORD
 ```
 
+**Portal:** no equivalent; the portal deployment form has its own password field.
+
 Preview the changes:
 
 ```sh
 az deployment group what-if -g rg-avd-lab -p infra/lab.local.bicepparam
 ```
+
+**Portal:** the portal has no what-if. The closest is the validation that runs on **Review + create** in the custom deployment below, which catches errors but doesn't list the changes.
 
 If what-if or the deployment says `Microsoft.DesktopVirtualization` isn't available in your region, add `param avdMetadataLocation = 'westus2'` (or another supported region) to your parameter file. The VMs stay in the resource group's region.
 
@@ -117,6 +137,14 @@ Deploy (about 15 minutes):
 ```sh
 az deployment group create -g rg-avd-lab -p infra/lab.local.bicepparam
 ```
+
+**Portal:** the portal can't read Bicep, so compile the template to ARM JSON first:
+
+```sh
+az bicep build -f infra/main.bicep --outfile ~/Downloads/avd-lab.json
+```
+
+Then search **Deploy a custom template** > **Build your own template in the editor** > **Load file**, pick `avd-lab.json` > **Save**. Choose the subscription and `rg-avd-lab`, fill in the same values as your parameter file (group IDs, VM size, password and so on) > **Review + create** > **Create**. Follow progress under the resource group's **Deployments**.
 
 ## Connect
 
@@ -134,6 +162,8 @@ Check that the hosts are registered and available (the `desktopvirtualization` C
 az rest --method get --url "https://management.azure.com/subscriptions/$(az account show --query id -o tsv)/resourceGroups/rg-avd-lab/providers/Microsoft.DesktopVirtualization/hostPools/avdlab-hp/sessionHosts?api-version=2024-04-03" --query "value[].{host:name, status:properties.status, sessions:properties.sessions}" -o table
 ```
 
+**Portal:** **Azure Virtual Desktop** > **Host pools** > *avdlab-hp* > **Session hosts**. Check **Status** is *Available*, and see **Active sessions**.
+
 When you're done, **sign out** of Windows (Start > your name > Sign out). Closing the window leaves a disconnected session, which keeps the scaling plan from stopping the host. Don't use **Shut down** inside Windows either: the VM stops but stays allocated, and compute keeps billing.
 
 Stop (deallocate) the hosts by hand, so compute stops billing:
@@ -142,11 +172,15 @@ Stop (deallocate) the hosts by hand, so compute stops billing:
 az vm deallocate --ids $(az vm list -g rg-avd-lab --query "[].id" -o tsv)
 ```
 
+**Portal:** **Virtual machines** > tick the hosts > **Stop**. In the portal, Stop always deallocates.
+
 Start them again (not needed if Start VM on Connect is on):
 
 ```sh
 az vm start --ids $(az vm list -g rg-avd-lab --query "[].id" -o tsv)
 ```
+
+**Portal:** **Virtual machines** > tick the hosts > **Start**.
 
 Check whether a host is running or deallocated:
 
@@ -154,7 +188,9 @@ Check whether a host is running or deallocated:
 az vm list -g rg-avd-lab -d --query "[].{vm:name, power:powerState}" -o table
 ```
 
-Add hosts: raise `sessionHostCount` and redeploy. Existing hosts are left alone.
+**Portal:** **Virtual machines**, **Status** column: *Running* or *Stopped (deallocated)*. *Stopped* without "deallocated" means compute is still billing.
+
+Add hosts: raise `sessionHostCount` and redeploy (from the portal: **Redeploy** on the resource group's latest deployment, with a higher host count). Existing hosts are left alone.
 
 Remove the whole lab:
 
@@ -162,8 +198,14 @@ Remove the whole lab:
 az group delete -n rg-avd-lab
 ```
 
+**Portal:** **Resource groups** > *rg-avd-lab* > **Delete resource group**, type the name to confirm > **Delete**.
+
 > [!NOTE]
 > Deleting the resource group doesn't remove the session hosts' **device objects** in Entra ID or Intune. Delete those by hand, or a rebuilt host with the same name may have trouble joining.
+>
+> **CLI:** find the device ID with `az rest --method get --url "https://graph.microsoft.com/v1.0/devices?\$filter=displayName eq 'avdlab-sh-0'&\$select=id,displayName"`, then `az rest --method delete --url "https://graph.microsoft.com/v1.0/devices/<id>"`.
+>
+> **Portal:** Entra admin center > **Devices** > **All devices** > search `avdlab-sh-0` > **Delete**. If you enrolled in Intune: Intune admin center > **Devices** > **All devices** > the host > **Delete**.
 
 ## Cost
 
@@ -180,15 +222,14 @@ Delete the resource group when you won't use the lab for a few weeks.
 
 ## Troubleshooting
 
-- **QuotaExceeded on the VM:** the subscription has no cores for that VM family in the region. Pick another size you have quota for (`az vm list-usage -l <region> -o table`) or request more quota in the portal.
-- **Run command fails with "Download of Agent failed ... Unable to connect to the remote server":** the hosts have no outbound internet. Check `az network vnet subnet show -g rg-avd-lab --vnet-name avdlab-vnet -n sessionhosts --query defaultOutboundAccess` is `true`. If you change it, deallocate and start the VM, then redeploy.
-- **Windows App keeps asking for the password:** MFA is required and single sign-on isn't on. Do the one-time tenant setting above and check the host pool RDP properties include `enablerdsaadauth:i:1`.
-- **RoleAssignmentExists on redeploy:** the same role was assigned by hand before. Remove the manual assignment (`az role assignment delete`) and redeploy.
-
-- **Host shows Unavailable:** give it 5–10 minutes after deployment. Then check the run command output on the VM, and `C:\Windows\Temp\Register-AvdSessionHost.log`.
+- **QuotaExceeded on the VM:** the subscription has no cores for that VM family in the region. Pick another size you have quota for (`az vm list-usage -l <region> -o table`; portal: **Quotas** > **Compute**) or request more quota from the same portal page.
+- **Run command fails with "Download of Agent failed ... Unable to connect to the remote server":** the hosts have no outbound internet. Check `az network vnet subnet show -g rg-avd-lab --vnet-name avdlab-vnet -n sessionhosts --query defaultOutboundAccess` is `true` (portal: **Virtual networks** > *avdlab-vnet* > **Subnets** > *sessionhosts*: **Enable private subnet** must be unticked). If you change it, deallocate and start the VM, then redeploy.
+- **Windows App keeps asking for the password:** MFA is required and single sign-on isn't on. Do the one-time tenant setting above and check the host pool RDP properties include `enablerdsaadauth:i:1` (CLI: `az rest --method get --url "https://management.azure.com/subscriptions/$(az account show --query id -o tsv)/resourceGroups/rg-avd-lab/providers/Microsoft.DesktopVirtualization/hostPools/avdlab-hp?api-version=2024-04-03" --query properties.customRdpProperty -o tsv`; portal: **Host pools** > *avdlab-hp* > **RDP Properties** > **Advanced**).
+- **RoleAssignmentExists on redeploy:** the same role was assigned by hand before. Remove the manual assignment and redeploy. CLI: `az role assignment list -g rg-avd-lab -o table` to find it, then `az role assignment delete --ids <id>`. Portal: *rg-avd-lab* > **Access control (IAM)** > **Role assignments**, tick it > **Delete**.
+- **Host shows Unavailable:** give it 5–10 minutes after deployment. Then check the run command output on the VM (`az vm run-command show -g rg-avd-lab --vm-name avdlab-sh-0 -n Register-AvdSessionHost --instance-view`), and `C:\Windows\Temp\Register-AvdSessionHost.log`.
 - **Run command failed:** the registration token is only valid for 4 hours from the deployment. Redeploy, which issues a new token and runs registration again.
 - **Sign-in fails on the host:** check the user has **Virtual Machine User Login** on the resource group, and see the MFA note above.
-- **Logs:** Log Analytics workspace `avdlab-law`, tables `WVDConnections`, `WVDErrors` and `WVDCheckpoints`.
+- **Logs:** Log Analytics workspace `avdlab-law`, tables `WVDConnections`, `WVDErrors` and `WVDCheckpoints`. Portal: *avdlab-law* > **Logs**.
 
 ## Roadmap
 
